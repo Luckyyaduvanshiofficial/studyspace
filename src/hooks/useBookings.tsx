@@ -121,18 +121,32 @@ export function useAdminBookings() {
   const { data: allBookings = [], isLoading, refetch } = useQuery({
     queryKey: ['all-bookings'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // First get bookings
+      const { data: bookings, error: bookingsError } = await supabase
         .from('bookings')
         .select(`
           *,
           seats (id, label, row_num, col_num),
-          shifts (id, name, start_time, end_time),
-          profiles:user_id (id, full_name, email, phone, student_id)
+          shifts (id, name, start_time, end_time)
         `)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      return data;
+      if (bookingsError) throw bookingsError;
+
+      // Then get profiles for each booking
+      const userIds = [...new Set(bookings?.map(b => b.user_id) || [])];
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, phone, student_id')
+        .in('id', userIds);
+
+      // Merge profiles with bookings
+      const bookingsWithProfiles = bookings?.map(booking => ({
+        ...booking,
+        profiles: profiles?.find(p => p.id === booking.user_id)
+      })) || [];
+
+      return bookingsWithProfiles;
     }
   });
 
