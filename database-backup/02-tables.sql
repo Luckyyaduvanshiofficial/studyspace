@@ -20,7 +20,7 @@ CREATE TABLE public.user_roles (
   UNIQUE (user_id, role)
 );
 
--- Memberships table
+-- Memberships table (wifi_password removed - use wifi_settings table only)
 CREATE TABLE public.memberships (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -28,7 +28,6 @@ CREATE TABLE public.memberships (
   status membership_status NOT NULL DEFAULT 'ACTIVE',
   starts_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  wifi_password TEXT, -- Optional per-user wifi password override
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -66,7 +65,7 @@ CREATE TABLE public.shifts (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Bookings table
+-- Bookings table (with payment and approval fields)
 CREATE TABLE public.bookings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -75,9 +74,17 @@ CREATE TABLE public.bookings (
   is_full_day BOOLEAN DEFAULT FALSE,
   starts_at TIMESTAMP WITH TIME ZONE NOT NULL,
   ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  status booking_status NOT NULL DEFAULT 'CONFIRMED',
+  status booking_status NOT NULL DEFAULT 'HOLD',
+  payment_amount NUMERIC DEFAULT 0,
+  payment_status TEXT DEFAULT 'PENDING',
+  admin_approved BOOLEAN DEFAULT FALSE,
+  approved_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  approved_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  -- Security constraints
+  CONSTRAINT check_date_range CHECK (starts_at < ends_at),
+  CONSTRAINT check_payment_amount CHECK (payment_amount >= 0)
 );
 
 -- Attendance table (check-in/check-out records)
@@ -120,3 +127,19 @@ ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.seat_blocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wifi_settings ENABLE ROW LEVEL SECURITY;
+
+-- Force RLS for table owners (extra security layer)
+ALTER TABLE public.profiles FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.user_roles FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.memberships FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.zones FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.seats FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.shifts FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.bookings FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.attendance FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.seat_blocks FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.wifi_settings FORCE ROW LEVEL SECURITY;
+
+-- Enable Realtime for bookings and seats
+ALTER PUBLICATION supabase_realtime ADD TABLE public.bookings;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.seats;
