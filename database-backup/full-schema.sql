@@ -1,9 +1,10 @@
 -- ============================================
 -- StudySpace Self-Study Library Management System
--- Complete Database Schema
+-- Complete Database Schema (Updated with Security Fixes)
 -- ============================================
 -- This file contains the complete schema in a single file
 -- for easy deployment to a new database.
+-- Last Updated: December 2025
 -- ============================================
 
 -- ============================================
@@ -46,7 +47,7 @@ CREATE TABLE public.profiles (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- User roles table for RBAC
+-- User roles table for RBAC (separate from profiles for security)
 CREATE TABLE public.user_roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -54,7 +55,7 @@ CREATE TABLE public.user_roles (
   UNIQUE (user_id, role)
 );
 
--- Memberships table
+-- Memberships table (wifi_password removed - use wifi_settings only)
 CREATE TABLE public.memberships (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -62,12 +63,11 @@ CREATE TABLE public.memberships (
   status membership_status NOT NULL DEFAULT 'ACTIVE',
   starts_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  wifi_password TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Zones table
+-- Zones table (single Main Study Hall)
 CREATE TABLE public.zones (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
@@ -78,7 +78,7 @@ CREATE TABLE public.zones (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Seats table
+-- Seats table (100 seats: S001-S100 in 10x10 grid)
 CREATE TABLE public.seats (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   zone_id UUID REFERENCES public.zones(id) ON DELETE CASCADE NOT NULL,
@@ -100,7 +100,7 @@ CREATE TABLE public.shifts (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Bookings table
+-- Bookings table (with payment and approval workflow)
 CREATE TABLE public.bookings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -109,12 +109,20 @@ CREATE TABLE public.bookings (
   is_full_day BOOLEAN DEFAULT FALSE,
   starts_at TIMESTAMP WITH TIME ZONE NOT NULL,
   ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
-  status booking_status NOT NULL DEFAULT 'CONFIRMED',
+  status booking_status NOT NULL DEFAULT 'HOLD',
+  payment_amount NUMERIC DEFAULT 0,
+  payment_status TEXT DEFAULT 'PENDING',
+  admin_approved BOOLEAN DEFAULT FALSE,
+  approved_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  approved_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  -- Security constraints
+  CONSTRAINT check_date_range CHECK (starts_at < ends_at),
+  CONSTRAINT check_payment_amount CHECK (payment_amount >= 0)
 );
 
--- Attendance table
+-- Attendance table (check-in/check-out via QR code)
 CREATE TABLE public.attendance (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   booking_id UUID REFERENCES public.bookings(id) ON DELETE CASCADE NOT NULL UNIQUE,
@@ -123,7 +131,7 @@ CREATE TABLE public.attendance (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Seat blocks table
+-- Seat blocks table (maintenance or admin reserved)
 CREATE TABLE public.seat_blocks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   seat_id UUID REFERENCES public.seats(id) ON DELETE CASCADE NOT NULL,
@@ -134,7 +142,7 @@ CREATE TABLE public.seat_blocks (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- WiFi settings table
+-- WiFi settings table (global wifi config for active members)
 CREATE TABLE public.wifi_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ssid TEXT NOT NULL DEFAULT 'StudySpace-WiFi',
@@ -143,7 +151,7 @@ CREATE TABLE public.wifi_settings (
   updated_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
 );
 
--- Enable Row Level Security
+-- Enable Row Level Security on all tables
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.memberships ENABLE ROW LEVEL SECURITY;
@@ -155,11 +163,27 @@ ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.seat_blocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wifi_settings ENABLE ROW LEVEL SECURITY;
 
+-- Force RLS for table owners (extra security layer)
+ALTER TABLE public.profiles FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.user_roles FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.memberships FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.zones FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.seats FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.shifts FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.bookings FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.attendance FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.seat_blocks FORCE ROW LEVEL SECURITY;
+ALTER TABLE public.wifi_settings FORCE ROW LEVEL SECURITY;
+
+-- Enable Realtime for bookings and seats
+ALTER PUBLICATION supabase_realtime ADD TABLE public.bookings;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.seats;
+
 -- ============================================
 -- PART 3: FUNCTIONS AND TRIGGERS
 -- ============================================
 
--- Function to check user role
+-- Function to check user role (SECURITY DEFINER to avoid RLS recursion)
 CREATE OR REPLACE FUNCTION public.has_role(_user_id UUID, _role app_role)
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -249,8 +273,61 @@ CREATE TRIGGER update_bookings_updated_at
   BEFORE UPDATE ON public.bookings
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
+-- Function to validate booking constraints (security)
+CREATE OR REPLACE FUNCTION public.validate_booking()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Check if seat is active
+  IF NOT EXISTS (
+    SELECT 1 FROM public.seats 
+    WHERE id = NEW.seat_id AND is_active = TRUE
+  ) THEN
+    RAISE EXCEPTION 'Seat is not active or does not exist';
+  END IF;
+
+  -- Check for overlapping bookings on the same seat
+  IF EXISTS (
+    SELECT 1 FROM public.bookings
+    WHERE seat_id = NEW.seat_id
+      AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid)
+      AND status NOT IN ('CANCELLED', 'NO_SHOW', 'RELEASED')
+      AND (NEW.starts_at, NEW.ends_at) OVERLAPS (starts_at, ends_at)
+  ) THEN
+    RAISE EXCEPTION 'Seat is already booked for this time period';
+  END IF;
+
+  -- Check if booking time falls within a seat block period
+  IF EXISTS (
+    SELECT 1 FROM public.seat_blocks
+    WHERE seat_id = NEW.seat_id
+      AND (NEW.starts_at, NEW.ends_at) OVERLAPS (starts_at, ends_at)
+  ) THEN
+    RAISE EXCEPTION 'Seat is blocked during this time period';
+  END IF;
+
+  -- Check if shift is active (if shift_id is provided)
+  IF NEW.shift_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.shifts 
+    WHERE id = NEW.shift_id AND is_active = TRUE
+  ) THEN
+    RAISE EXCEPTION 'Shift is not active or does not exist';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+-- Trigger for booking validation
+CREATE TRIGGER validate_booking_trigger
+  BEFORE INSERT OR UPDATE ON public.bookings
+  FOR EACH ROW EXECUTE FUNCTION public.validate_booking();
+
 -- ============================================
--- PART 4: RLS POLICIES
+-- PART 4: RLS POLICIES (Authenticated Access Only)
 -- ============================================
 
 -- Profiles policies
@@ -284,8 +361,8 @@ CREATE POLICY "Admins can manage all memberships"
   ON public.memberships FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
--- Zones policies
-CREATE POLICY "Anyone can view active zones"
+-- Zones policies (authenticated users only)
+CREATE POLICY "Authenticated users can view active zones"
   ON public.zones FOR SELECT TO authenticated
   USING (is_active = TRUE);
 
@@ -293,8 +370,8 @@ CREATE POLICY "Admins can manage zones"
   ON public.zones FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
--- Seats policies
-CREATE POLICY "Anyone can view active seats"
+-- Seats policies (authenticated users only)
+CREATE POLICY "Authenticated users can view active seats"
   ON public.seats FOR SELECT TO authenticated
   USING (is_active = TRUE);
 
@@ -302,8 +379,8 @@ CREATE POLICY "Admins can manage seats"
   ON public.seats FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
--- Shifts policies
-CREATE POLICY "Anyone can view active shifts"
+-- Shifts policies (authenticated users only)
+CREATE POLICY "Authenticated users can view active shifts"
   ON public.shifts FOR SELECT TO authenticated
   USING (is_active = TRUE);
 
@@ -328,6 +405,11 @@ CREATE POLICY "Admins can manage all bookings"
   ON public.bookings FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
+CREATE POLICY "Admins can approve bookings"
+  ON public.bookings FOR UPDATE TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'))
+  WITH CHECK (public.has_role(auth.uid(), 'admin'));
+
 -- Attendance policies
 CREATE POLICY "Users can view their own attendance"
   ON public.attendance FOR SELECT TO authenticated
@@ -341,8 +423,8 @@ CREATE POLICY "Admins can manage all attendance"
   ON public.attendance FOR ALL TO authenticated
   USING (public.has_role(auth.uid(), 'admin'));
 
--- Seat blocks policies
-CREATE POLICY "Anyone can view seat blocks"
+-- Seat blocks policies (authenticated users only)
+CREATE POLICY "Authenticated users can view seat blocks"
   ON public.seat_blocks FOR SELECT TO authenticated
   USING (TRUE);
 
@@ -363,33 +445,30 @@ CREATE POLICY "Admins can manage wifi settings"
 -- PART 5: SEED DATA
 -- ============================================
 
--- Default zones
+-- Single Main Study Hall zone
 INSERT INTO public.zones (name, description, icon, color) VALUES
-  ('Quiet Zone', 'Silent study area for focused work', 'Volume2', 'blue'),
-  ('Group Study', 'Collaborative spaces for group discussions', 'Users', 'green'),
-  ('Computer Lab', 'Workstations with desktop computers', 'Monitor', 'purple'),
-  ('Reading Area', 'Comfortable seating for reading', 'BookOpen', 'amber');
+  ('Main Study Hall', 'Large study area with 100 seats and unlimited 5G internet', 'BookOpen', 'blue');
 
--- Default shifts
+-- Shifts: Morning and Evening
 INSERT INTO public.shifts (name, start_time, end_time) VALUES
   ('Morning', '07:00:00', '14:30:00'),
   ('Evening', '14:30:00', '22:00:00');
 
--- Default seats (12 per zone)
-WITH zone_ids AS (
-  SELECT id, name FROM public.zones
+-- 100 seats (S001-S100) in 10x10 grid
+WITH zone_id AS (
+  SELECT id FROM public.zones WHERE name = 'Main Study Hall' LIMIT 1
 )
 INSERT INTO public.seats (zone_id, label, row_num, col_num, capacity)
 SELECT 
   z.id,
-  z.name || '-' || row_num || col_num,
+  'S' || LPAD((((row_num - 1) * 10) + col_num)::TEXT, 3, '0'),
   row_num,
   col_num,
-  CASE WHEN z.name = 'Group Study' THEN 4 ELSE 1 END
-FROM zone_ids z
-CROSS JOIN generate_series(1, 3) AS row_num
-CROSS JOIN generate_series(1, 4) AS col_num;
+  1
+FROM zone_id z
+CROSS JOIN generate_series(1, 10) AS row_num
+CROSS JOIN generate_series(1, 10) AS col_num;
 
 -- Default WiFi settings
 INSERT INTO public.wifi_settings (ssid, password) VALUES
-  ('StudySpace-WiFi', 'Welcome@Study2025');
+  ('StudySpace-5G', 'Welcome@Study2025');

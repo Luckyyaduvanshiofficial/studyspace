@@ -93,3 +93,56 @@ CREATE TRIGGER update_memberships_updated_at
 CREATE TRIGGER update_bookings_updated_at
   BEFORE UPDATE ON public.bookings
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Function to validate booking constraints (security)
+CREATE OR REPLACE FUNCTION public.validate_booking()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Check if seat is active
+  IF NOT EXISTS (
+    SELECT 1 FROM public.seats 
+    WHERE id = NEW.seat_id AND is_active = TRUE
+  ) THEN
+    RAISE EXCEPTION 'Seat is not active or does not exist';
+  END IF;
+
+  -- Check for overlapping bookings on the same seat (excluding cancelled bookings)
+  IF EXISTS (
+    SELECT 1 FROM public.bookings
+    WHERE seat_id = NEW.seat_id
+      AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid)
+      AND status NOT IN ('CANCELLED', 'NO_SHOW', 'RELEASED')
+      AND (NEW.starts_at, NEW.ends_at) OVERLAPS (starts_at, ends_at)
+  ) THEN
+    RAISE EXCEPTION 'Seat is already booked for this time period';
+  END IF;
+
+  -- Check if booking time falls within a seat block period
+  IF EXISTS (
+    SELECT 1 FROM public.seat_blocks
+    WHERE seat_id = NEW.seat_id
+      AND (NEW.starts_at, NEW.ends_at) OVERLAPS (starts_at, ends_at)
+  ) THEN
+    RAISE EXCEPTION 'Seat is blocked during this time period';
+  END IF;
+
+  -- Check if shift is active (if shift_id is provided)
+  IF NEW.shift_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.shifts 
+    WHERE id = NEW.shift_id AND is_active = TRUE
+  ) THEN
+    RAISE EXCEPTION 'Shift is not active or does not exist';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+-- Trigger for booking validation
+CREATE TRIGGER validate_booking_trigger
+  BEFORE INSERT OR UPDATE ON public.bookings
+  FOR EACH ROW EXECUTE FUNCTION public.validate_booking();
