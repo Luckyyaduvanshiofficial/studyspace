@@ -1,21 +1,22 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Calendar, LayoutDashboard, User, Menu, X, LogIn, LogOut } from 'lucide-react';
+import { BookOpen, Calendar, User, Menu, X, LogIn, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { useUserRole } from '@/hooks/useUserRole';
 
 export function Header() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut, loading } = useAuth();
+  const { isAdmin } = useUserRole();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
     { path: '/', label: 'Home', icon: BookOpen },
     { path: '/book', label: 'Book a Seat', icon: Calendar },
     ...(user ? [{ path: '/dashboard', label: 'My Bookings', icon: User }] : []),
-    { path: '/admin', label: 'Admin', icon: LayoutDashboard },
   ];
 
   const handleSignOut = async () => {

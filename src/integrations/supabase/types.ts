@@ -48,10 +48,15 @@ export type Database = {
       }
       bookings: {
         Row: {
+          admin_approved: boolean | null
+          approved_at: string | null
+          approved_by: string | null
           created_at: string | null
           ends_at: string
           id: string
           is_full_day: boolean | null
+          payment_amount: number | null
+          payment_status: string | null
           seat_id: string
           shift_id: string | null
           starts_at: string
@@ -60,10 +65,15 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          admin_approved?: boolean | null
+          approved_at?: string | null
+          approved_by?: string | null
           created_at?: string | null
           ends_at: string
           id?: string
           is_full_day?: boolean | null
+          payment_amount?: number | null
+          payment_status?: string | null
           seat_id: string
           shift_id?: string | null
           starts_at: string
@@ -72,10 +82,15 @@ export type Database = {
           user_id: string
         }
         Update: {
+          admin_approved?: boolean | null
+          approved_at?: string | null
+          approved_by?: string | null
           created_at?: string | null
           ends_at?: string
           id?: string
           is_full_day?: boolean | null
+          payment_amount?: number | null
+          payment_status?: string | null
           seat_id?: string
           shift_id?: string | null
           starts_at?: string
