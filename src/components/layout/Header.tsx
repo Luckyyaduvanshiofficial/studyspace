@@ -1,19 +1,27 @@
-import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, Calendar, LayoutDashboard, User, Menu, X } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { BookOpen, Calendar, LayoutDashboard, User, Menu, X, LogIn, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-
-const navItems = [
-  { path: '/', label: 'Home', icon: BookOpen },
-  { path: '/book', label: 'Book a Seat', icon: Calendar },
-  { path: '/dashboard', label: 'My Bookings', icon: User },
-  { path: '/admin', label: 'Admin', icon: LayoutDashboard },
-];
+import { useAuth } from '@/hooks/useAuth';
 
 export function Header() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, signOut, loading } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const navItems = [
+    { path: '/', label: 'Home', icon: BookOpen },
+    { path: '/book', label: 'Book a Seat', icon: Calendar },
+    ...(user ? [{ path: '/dashboard', label: 'My Bookings', icon: User }] : []),
+    { path: '/admin', label: 'Admin', icon: LayoutDashboard },
+  ];
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/');
+  };
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-card/80 backdrop-blur-sm">
@@ -45,6 +53,27 @@ export function Header() {
               </Link>
             );
           })}
+          
+          {!loading && (
+            user ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleSignOut}
+                className="gap-2 ml-2"
+              >
+                <LogOut className="h-4 w-4" />
+                Sign Out
+              </Button>
+            ) : (
+              <Link to="/auth">
+                <Button variant="default" size="sm" className="gap-2 ml-2">
+                  <LogIn className="h-4 w-4" />
+                  Sign In
+                </Button>
+              </Link>
+            )
+          )}
         </nav>
 
         {/* Mobile Menu Button */}
@@ -83,6 +112,29 @@ export function Header() {
                 </Link>
               );
             })}
+            
+            {!loading && (
+              user ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    handleSignOut();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full justify-start gap-2"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Sign Out
+                </Button>
+              ) : (
+                <Link to="/auth" onClick={() => setMobileMenuOpen(false)}>
+                  <Button variant="default" className="w-full justify-start gap-2">
+                    <LogIn className="h-4 w-4" />
+                    Sign In
+                  </Button>
+                </Link>
+              )
+            )}
           </div>
         </nav>
       )}
