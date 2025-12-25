@@ -125,7 +125,6 @@ export type Database = {
           status: Database["public"]["Enums"]["membership_status"]
           updated_at: string | null
           user_id: string
-          wifi_password: string | null
         }
         Insert: {
           created_at?: string | null
@@ -136,7 +135,6 @@ export type Database = {
           status?: Database["public"]["Enums"]["membership_status"]
           updated_at?: string | null
           user_id: string
-          wifi_password?: string | null
         }
         Update: {
           created_at?: string | null
@@ -147,7 +145,6 @@ export type Database = {
           status?: Database["public"]["Enums"]["membership_status"]
           updated_at?: string | null
           user_id?: string
-          wifi_password?: string | null
         }
         Relationships: []
       }
