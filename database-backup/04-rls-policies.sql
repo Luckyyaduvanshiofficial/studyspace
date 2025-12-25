@@ -48,7 +48,7 @@ CREATE POLICY "Admins can manage all memberships"
 -- ============================================
 -- ZONES TABLE POLICIES
 -- ============================================
-CREATE POLICY "Anyone can view active zones"
+CREATE POLICY "Authenticated users can view active zones"
   ON public.zones FOR SELECT
   TO authenticated
   USING (is_active = TRUE);
@@ -61,7 +61,7 @@ CREATE POLICY "Admins can manage zones"
 -- ============================================
 -- SEATS TABLE POLICIES
 -- ============================================
-CREATE POLICY "Anyone can view active seats"
+CREATE POLICY "Authenticated users can view active seats"
   ON public.seats FOR SELECT
   TO authenticated
   USING (is_active = TRUE);
@@ -74,7 +74,7 @@ CREATE POLICY "Admins can manage seats"
 -- ============================================
 -- SHIFTS TABLE POLICIES
 -- ============================================
-CREATE POLICY "Anyone can view active shifts"
+CREATE POLICY "Authenticated users can view active shifts"
   ON public.shifts FOR SELECT
   TO authenticated
   USING (is_active = TRUE);
@@ -127,7 +127,7 @@ CREATE POLICY "Admins can manage all attendance"
 -- ============================================
 -- SEAT_BLOCKS TABLE POLICIES
 -- ============================================
-CREATE POLICY "Anyone can view seat blocks"
+CREATE POLICY "Authenticated users can view seat blocks"
   ON public.seat_blocks FOR SELECT
   TO authenticated
   USING (TRUE);
